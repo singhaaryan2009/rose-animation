@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>A Rose Written in Every Language</title>
+  <style>
+    :root {
+      --bg: #060208;
+      --accent: #e83c68;
+      --text: #f5d0da;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: Georgia, "Times New Roman", serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow-x: hidden;
+    }
+
+    .canvas-container {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+    }
+
+    canvas {
+      width: min(92vw, 92vh, 800px);
+      height: min(92vw, 92vh, 800px);
+      background-color: var(--bg);
+      display: block;
+      border-radius: 8px;
+    }
+
+    .controls {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      display: flex;
+      gap: 10px;
+      z-index: 10;
+    }
+
+    button {
+      background: rgba(25, 10, 20, 0.75);
+      color: var(--text);
+      border: 1px solid rgba(232, 60, 104, 0.4);
+      padding: 8px 16px;
+      border-radius: 999px;
+      font-family: inherit;
+      font-size: 13px;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      backdrop-filter: blur(6px);
+      transition: all 0.2s ease;
+    }
+
+    button:hover {
+      background: rgba(232, 60, 104, 0.25);
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="canvas-container">
+    <canvas id="roseCanvas"></canvas>
+  </div>
+
+  <div class="controls">
+    <button id="replayBtn" title="Replay Animation">Replay</button>
+  </div>
+
+  <script>
+    const W = 800;
+    const H = 800;
+    const DURATION = 10;
+    const TICK = 16;
+    const ANIM = 38;
+    const LIFT = 32;
+    const GAP = 3;
+    const BG = "#060208";
+    const FONT_FALLBACKS = 'Georgia, "Times New Roman", Arial, serif';
+    const SEED = 17;
+
+    const PHRASES = [
+      "I LOVE YOU", "I love you", "Te amo", "Ti amo", "Je t'aime",
+      "Ich liebe dich", "Eu te amo", "Seni seviyorum", "Я тебя люблю",
+      "사랑해", "愛してる", "我爱你", "मैं तुमसे प्यार करती हूँ",
+      "मैं तुमसे प्यार करता हूँ", "Σ' αγαπώ", "Ik hou van jou",
+      "Jag älskar dig", "Kocham cię", "ฉันรักคุณ", "Anh yêu em",
+      "Aku cinta kamu", "Mahal kita", "אני אוהבת אותך", "أحبك",
+      "నేను నిన్ను ప్రేమిస్తున్నాను", "நான் உன்னை காதலிக்கிறேன்",
+      "আমি তোমাকে ভালোবাসি", "Volim te", "Te iubesc", "Ljubim te",
+      "Nakupenda", "Я тебе кохаю", "Miluji tě", "Szeretlek",
+      "Rakastan sinua", "Jeg elsker dig"
+    ];
+
+    const ACCENTS = [
+      "LOVE", "TE AMO", "AMOUR", "TI AMO", "I LOVE YOU", "AMOR",
+      "愛してる", "사랑해", "我爱你", "LOVE YOU", "JE T'AIME",
+      "SZERETLEK", "NAKUPENDA"
+    ];
+
+    const SHORT_PHRASES = [
+      "Te amo", "Ti amo", "AMOR", "LOVE", "愛してる", "사랑해", "我爱你",
+      "Amour", "I love you", "Mahal kita", "Te iubesc", "Volim te",
+      "Szeretlek", "Miluji tě", "Nakupenda"
+    ];
+
+    const HEAD_WORDS = PHRASES.concat([
+      "LOVE", "LOVE", "LOVE YOU", "AMOR", "AMOR", "AMOUR", "AMOUR",
+      "AMORE", "LIEBE", "TE AMO", "TE AMO", "TI AMO", "TI AMO",
+      "TE QUIERO", "TE QUIERO", "JE T'AIME", "I LOVE YOU", "I LOVE YOU",
+      "愛", "愛してる", "愛してる", "사랑", "사랑해", "사랑해", "我爱你",
+      "Mahal kita", "รักคุณ", "ANH YÊU EM", "तुमसे प्यार है",
+      "నిన్ను ప్రేమిస్తున్నా", "உன்னை காதலிக்கிறேன்", "ভালোবাসি",
+      "أحبك", "LOVE", "AMOR", "AMOUR", "Nakupenda", "Szeretlek"
+    ]);
+
+    const HEAD_SIZES = [7, 8, 9, 10, 11, 12, 13, 14];
+    const HEAD_WEIGHTS = [2, 4, 5, 5, 4, 2, 1, 0.5];
+
+    // Seeded PRNG (Mulberry32) to mirror Python's random.Random(SEED)
+    class SeededRandom {
+      constructor(seed) {
+        this.state = seed >>> 0;
+      }
+      random() {
+        let t = (this.state += 0x6D2B79F5);
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      }
+      uniform(a, b) {
+        return a + (b - a) * this.random();
+      }
+      choice(arr) {
+        return arr[Math.floor(this.random() * arr.length)];
+      }
+      choices(arr, weights) {
+        const total = weights.reduce((acc, w) => acc + w, 0);
+        let r = this.random() * total;
+        for (let i = 0; i < arr.length; i++) {
+          if (r < weights[i]) return arr[i];
+          r -= weights[i];
+        }
+        return arr[arr.length - 1];
+      }
+      shuffle(arr) {
+        for (let i = arr.length - 1; i > 0; i--) {
+          const j = Math.floor(this.random() * (i + 1));
+          [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+      }
+    }
+
+    let rng = new SeededRandom(SEED);
+
+    function ellipsePoly(cx, cy, rx, ry, points = 160) {
+      const poly = [];
+      for (let i = 0; i < points; i++) {
+        const angle = (2 * Math.PI * i) / points;
+        poly.push([cx + rx * Math.cos(angle), cy + ry * Math.sin(angle)]);
+      }
+      return poly;
+    }
+
+    const HEAD_SHAPES = [
+      ellipsePoly(400, 180, 145, 90),
+      ellipsePoly(330, 180, 120, 83),
+      ellipsePoly(470, 180, 120, 83),
+      ellipsePoly(275, 260, 98, 112),
+      ellipsePoly(525, 260, 98, 112),
+      ellipsePoly(338, 325, 118, 126),
+      ellipsePoly(462, 325, 118, 126),
+      [
+        [230, 330], [290, 365], [348, 414], [400, 532],
+        [452, 414], [510, 365], [570, 330], [522, 452],
+        [400, 542], [278, 452]
+      ]
+    ];
+
+    const STEM = [
+      [378, 493], [422, 493], [427, 752], [408, 772],
+      [390, 760], [374, 600]
+    ];
+    const LEFT_LEAF = [
+      [395, 594], [359, 554], [304, 535], [244, 541],
+      [215, 562], [253, 609], [321, 631], [374, 617]
+    ];
+    const RIGHT_LEAF = [
+      [406, 619], [442, 581], [491, 561], [553, 578],
+      [578, 600], [535, 640], [476, 660], [425, 649]
+    ];
+
+    const canvas = document.getElementById("roseCanvas");
+    const ctx = canvas.getContext("2d");
+
+    // High-DPI canvas setup
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    ctx.scale(dpr, dpr);
+
+    function hasAny(text, lo, hi) {
+      for (let i = 0; i < text.length; i++) {
+        const code = text.codePointAt(i);
+        if (code >= lo && code <= hi) return true;
+      }
+      return false;
+    }
+
+    function chooseFamily(text) {
+      if (hasAny(text, 0xAC00, 0xD7AF)) {
+        return '"Malgun Gothic", "Noto Sans CJK KR", "Apple SD Gothic Neo", sans-serif';
+      } else if (hasAny(text, 0x3040, 0x30FF)) {
+        return '"Yu Gothic UI", "Meiryo", "Noto Sans CJK JP", "Hiragino Sans", sans-serif';
+      } else if (hasAny(text, 0x4E00, 0x9FFF)) {
+        return '"Microsoft YaHei", "SimHei", "Noto Sans CJK SC", "PingFang SC", sans-serif';
+      } else if (hasAny(text, 0x0900, 0x097F)) {
+        return '"Nirmala UI", "Mangal", "Noto Sans Devanagari", sans-serif';
+      } else if (hasAny(text, 0x0980, 0x09FF)) {
+        return '"Nirmala UI", "Vrinda", "Noto Sans Bengali", sans-serif';
+      } else if (hasAny(text, 0x0C00, 0x0C7F)) {
+        return '"Gautami", "Nirmala UI", "Noto Sans Telugu", sans-serif';
+      } else if (hasAny(text, 0x0B80, 0x0BFF)) {
+        return '"Latha", "Noto Sans Tamil", sans-serif';
+      } else if (hasAny(text, 0x0E00, 0x0E7F)) {
+        return '"Leelawadee UI", "Noto Sans Thai", "Thonburi", sans-serif';
+      } else if (hasAny(text, 0x0600, 0x06FF)) {
+        return '"Segoe UI", Arial, "Noto Sans Arabic", sans-serif';
+      } else if (hasAny(text, 0x0590, 0x05FF)) {
+        return 'Arial, "Noto Sans Hebrew", sans-serif';
+      } else if (hasAny(text, 0x0370, 0x03FF)) {
+        return 'Georgia, Arial, serif';
+      } else if (hasAny(text, 0x0400, 0x04FF)) {
+        return 'Georgia, Arial, "Segoe UI", serif';
+      }
+      return FONT_FALLBACKS;
+    }
+
+    const fontStringCache = new Map();
+    const measureCache = new Map();
+
+    function fontFor(text, size) {
+      const family = chooseFamily(text);
+      const key = `${family}|${size}`;
+      if (!fontStringCache.has(key)) {
+        // Tkinter positive font sizes are in points (pt)
+        fontStringCache.set(key, `bold ${size}pt ${family}`);
+      }
+      return fontStringCache.get(key);
+    }
+
+    function measureTextWidth(text, fontStr) {
+      const key = `${fontStr}|${text}`;
+      if (!measureCache.has(key)) {
+        ctx.font = fontStr;
+        measureCache.set(key, ctx.measureText(text).width);
+      }
+      return measureCache.get(key);
+    }
+
+    function measureLineSpace(text, size) {
+      const fontStr = fontFor(text, size);
+      ctx.font = fontStr;
+      const m = ctx.measureText(text);
+      if (m.fontBoundingBoxAscent !== undefined && m.fontBoundingBoxDescent !== undefined) {
+        return Math.ceil(m.fontBoundingBoxAscent + m.fontBoundingBoxDescent);
+      }
+      return Math.ceil(size * (4 / 3) * 1.2);
+    }
+
+    function clamp(v) {
+      return Math.max(0.0, Math.min(1.0, v));
+    }
+
+    function hx(rgbArr) {
+      const r = Math.round(clamp(rgbArr[0]) * 255).toString(16).padStart(2, "0");
+      const g = Math.round(clamp(rgbArr[1]) * 255).toString(16).padStart(2, "0");
+      const b = Math.round(clamp(rgbArr[2]) * 255).toString(16).padStart(2, "0");
+      return `#${r}${g}${b}`;
+    }
+
+    function mix(a, b, k) {
+      return [
+        a[0] + (b[0] - a[0]) * k,
+        a[1] + (b[1] - a[1]) * k,
+        a[2] + (b[2] - a[2]) * k
+      ];
+    }
+
+    function rgb(hexColor) {
+      const clean = hexColor.replace("#", "");
+      return [
+        parseInt(clean.slice(0, 2), 16) / 255,
+        parseInt(clean.slice(2, 4), 16) / 255,
+        parseInt(clean.slice(4, 6), 16) / 255
+      ];
+    }
+
+    const BGC = rgb(BG);
+
+    function polygonSpans(poly, y) {
+      const xs = [];
+      const n = poly.length;
+      for (let i = 0; i < n; i++) {
+        const [x1, y1] = poly[i];
+        const [x2, y2] = poly[(i + 1) % n];
+        if ((y1 <= y && y < y2) || (y2 <= y && y < y1)) {
+          if (y2 !== y1) {
+            xs.push(x1 + ((y - y1) * (x2 - x1)) / (y2 - y1));
+          }
+        }
+      }
+      xs.sort((a, b) => a - b);
+      const spans = [];
+      for (let i = 0; i + 1 < xs.length; i += 2) {
+        spans.push([xs[i], xs[i + 1]]);
+      }
+      return spans;
+    }
+
+    function mergeSpans(spans) {
+      if (!spans.length) return [];
+      const sorted = spans.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      const merged = [[sorted[0][0], sorted[0][1]]];
+      for (let i = 1; i < sorted.length; i++) {
+        const [lo, hi] = sorted[i];
+        const last = merged[merged.length - 1];
+        if (lo <= last[1] + 1) {
+          last[1] = Math.max(last[1], hi);
+        } else {
+          merged.push([lo, hi]);
+        }
+      }
+      return merged;
+    }
+
+    function shapeSpans(polygons, y) {
+      const raw = [];
+      for (const poly of polygons) {
+        raw.push(...polygonSpans(poly, y));
+      }
+      return mergeSpans(raw);
+    }
+
+    function intersectSpans(aSpans, bSpans, minimum = 15) {
+      const out = [];
+      for (const a of aSpans) {
+        for (const b of bSpans) {
+          const lo = Math.max(a[0], b[0]);
+          const hi = Math.min(a[1], b[1]);
+          if (hi - lo >= minimum) {
+            out.push([lo, hi]);
+          }
+        }
+      }
+      return mergeSpans(out);
+    }
+
+    function roseColor(x, y, size, edge = false) {
+      const dx = (x - 400) / 210;
+      const dy = (y - 300) / 220;
+      const rad = Math.sqrt(dx * dx + dy * dy);
+      let palette;
+      if (rad > 0.82) {
+        palette = ["#8f0b2b", "#ae1238", "#c41d48", "#d52b53"];
+      } else if (rad > 0.48) {
+        palette = ["#b9143d", "#d21e49", "#e33b60", "#f04e73"];
+      } else {
+        palette = ["#c51b49", "#e83c68", "#f16b8b", "#ff91a9"];
+      }
+      if (edge) {
+        palette = palette.concat(["#f5a0b3", "#ef6488"]);
+      }
+      if (size >= 14) {
+        palette = palette.concat(["#ff9ab1", "#ffd0dc"]);
+      }
+      return rgb(rng.choice(palette));
+    }
+
+    function greenColor(x, y, size, edge = false) {
+      let palette = ["#3e8034", "#559c3c", "#72b84b", "#91cf62", "#b1e184"];
+      if (size >= 9) {
+        palette = palette.concat(["#a7d486", "#c0e19a"]);
+      }
+      return rgb(rng.choice(palette));
+    }
+
+    let phraseCycles = {};
+
+    function phraseFromPool(poolName, size) {
+      const pool = size >= 14 ? ACCENTS : (poolName !== "head" ? SHORT_PHRASES : HEAD_WORDS);
+      const key = `${poolName}|${size >= 14 ? "accent" : "normal"}`;
+      if (!phraseCycles[key] || phraseCycles[key].items.length === 0) {
+        const items = pool.slice();
+        rng.shuffle(items);
+        phraseCycles[key] = { items, index: 0 };
+      }
+      const state = phraseCycles[key];
+      const phrase = state.items[state.index];
+      state.index += 1;
+      if (state.index >= state.items.length) {
+        state.items = [];
+      }
+      return phrase;
+    }
+
+    function sizeFor(poolName) {
+      if (poolName === "head") {
+        return rng.choices(HEAD_SIZES, HEAD_WEIGHTS);
+      }
+      return rng.choice(poolName === "stem" ? [6, 7, 8] : [7, 8, 9, 10]);
+    }
+
+    function colorFor(x, y, size, kind, edge = false) {
+      if (kind === "head") {
+        return roseColor(x, y, size, edge);
+      }
+      return greenColor(x, y, size, edge);
+    }
+
+    function buildRegion(polygons, yStart, yEnd, rowH, kind) {
+      const placed = [];
+      const half = rowH / 2;
+      let y = yStart + half;
+
+      while (y < yEnd - half) {
+        const top = shapeSpans(polygons, y - half + 1);
+        const bottom = shapeSpans(polygons, y + half - 1);
+        const row = intersectSpans(top, bottom, kind === "head" ? 19 : 16);
+
+        for (let [lo, hi] of row) {
+          const margin = kind === "head" ? 3 : 1;
+          lo += margin;
+          hi -= margin;
+          const available = hi - lo;
+          if (available < 18) continue;
+
+          const line = [];
+          let cur = lo + rng.uniform(0, Math.min(3, Math.max(1, available * 0.02)));
+          while (cur < hi - 15) {
+            const remaining = hi - cur;
+            const candidates = [];
+            const targetWidth = Math.min(74, Math.max(19, remaining * 0.22));
+            const tries = kind === "head" ? 45 : 55;
+
+            for (let t = 0; t < tries; t++) {
+              const size = sizeFor(kind);
+              const text = phraseFromPool(kind, size);
+              const fontStr = fontFor(text, size);
+              const width = measureTextWidth(text, fontStr);
+              if (width <= remaining && width >= Math.min(18, remaining * 0.20)) {
+                const score = Math.abs(width - targetWidth) + rng.uniform(0, 13);
+                candidates.push({ score, text, size, width, fontStr });
+              }
+            }
+            if (!candidates.length) break;
+            candidates.sort((a, b) => a.score - b.score);
+            const pick = rng.choice(candidates.slice(0, Math.min(4, candidates.length)));
+            line.push({
+              x: cur + pick.width / 2,
+              y: y,
+              text: pick.text,
+              size: pick.size,
+              width: pick.width,
+              fontStr: pick.fontStr,
+              kind: kind
+            });
+            cur += pick.width + (kind === "head" ? GAP : 1);
+          }
+
+          if (!line.length) continue;
+
+          const gapVal = kind === "head" ? GAP : 1;
+          const used = line.reduce((sum, item) => sum + item.width, 0) + Math.max(0, line.length - 1) * gapVal;
+          const slack = Math.max(0, available - used);
+          const extra = line.length > 1 ? slack / (line.length - 1) : 0;
+
+          for (let i = 0; i < line.length; i++) {
+            const item = line[i];
+            item.x += extra * i;
+            item.edge = (i === 0 || i === line.length - 1);
+            item.color = colorFor(item.x, item.y, item.size, kind, item.edge);
+            placed.push(item);
+          }
+        }
+        y += rowH;
+      }
+      return placed;
+    }
+
+    const headRowH = Math.max(...[9, 10, 11].map(s => measureLineSpace("I LOVE YOU", s))) + 1;
+    const leafRowH = Math.max(...[7, 8, 9].map(s => measureLineSpace("Te amo", s))) + 1;
+    const stemRowH = Math.max(...[6, 7, 8].map(s => measureLineSpace("Te amo", s))) + 1;
+
+    const placed = [
+      ...buildRegion(HEAD_SHAPES, 88, 540, headRowH, "head"),
+      ...buildRegion([LEFT_LEAF], 543, 618, leafRowH, "leaf"),
+      ...buildRegion([RIGHT_LEAF], 575, 651, leafRowH, "leaf"),
+      ...buildRegion([STEM], 492, 773, stemRowH, "stem")
+    ];
+
+    const outer = placed.filter(p => p.edge);
+    const inner = placed.filter(p => !p.edge);
+
+    const TWO_PI = 2 * Math.PI;
+    outer.sort((a, b) => {
+      const angA = ((Math.atan2(a.y - 300, a.x - 400) % TWO_PI) + TWO_PI) % TWO_PI;
+      const angB = ((Math.atan2(b.y - 300, b.x - 400) % TWO_PI) + TWO_PI) % TWO_PI;
+      return angA - angB;
+    });
+
+    const innerKeyed = inner.map(p => ({ p, key: rng.random() }));
+    innerKeyed.sort((a, b) => a.key - b.key);
+    const ORDER = outer.concat(innerKeyed.map(item => item.p));
+
+    // Animation state
+    let spawnedItems = [];
+    let active = [];
+    let orderIndex = 0;
+    const rate = ORDER.length / Math.max(1, (DURATION * 1000) / TICK);
+    let acc = 0.0;
+    let spawning = true;
+    let stepTimer = null;
+    let shimmerTimer = null;
+
+    function spawn(p) {
+      const color = p.color;
+      p.frame = 0;
+      p.dx = rng.uniform(-6, 6);
+      p.px = p.x + p.dx;
+      p.py = p.y - LIFT;
+      p.shadowHex = BG;
+      p.haloHex = BG;
+      p.mainHex = BG;
+      p.settledHex = hx(color);
+      p.settledShadowHex = hx([color[0] * 0.23, color[1] * 0.23, color[2] * 0.23]);
+      p.settledHaloHex = hx([color[0] * 0.30, color[1] * 0.30, color[2] * 0.30]);
+
+      spawnedItems.push(p);
+      active.push(p);
+    }
+
+    function animateItem(p) {
+      p.frame += 1;
+      const u = clamp(p.frame / ANIM);
+      const eased = 1 - Math.pow(1 - u, 3);
+      const color = p.color;
+
+      p.px = p.x + p.dx * (1 - eased);
+      p.py = p.y - LIFT * (1 - eased);
+
+      const shadowCol = [color[0] * 0.23, color[1] * 0.23, color[2] * 0.23];
+      const haloCol = [color[0] * 0.30, color[1] * 0.30, color[2] * 0.30];
+
+      p.shadowHex = hx(mix(BGC, shadowCol, eased));
+      p.haloHex = hx(mix(BGC, haloCol, eased * eased));
+
+      const flash = 0.55 * Math.sin(Math.PI * clamp((u - 0.58) / 0.42));
+      const baseCol = mix(BGC, color, Math.pow(eased, 1.35));
+      p.mainHex = hx(mix(baseCol, [1.0, 0.83, 0.88], flash));
+
+      if (u >= 1) {
+        p.px = p.x;
+        p.py = p.y;
+        p.shadowHex = p.settledShadowHex;
+        p.haloHex = p.settledHaloHex;
+        p.mainHex = p.settledHex;
+        return false;
+      }
+      return true;
+    }
+
+    function renderCanvas() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      for (let i = 0; i < spawnedItems.length; i++) {
+        const p = spawnedItems[i];
+        ctx.font = p.fontStr;
+
+        ctx.fillStyle = p.shadowHex;
+        ctx.fillText(p.text, p.px + 1, p.py + 2);
+
+        ctx.fillStyle = p.haloHex;
+        ctx.fillText(p.text, p.px, p.py);
+
+        ctx.fillStyle = p.mainHex;
+        ctx.fillText(p.text, p.px, p.py);
+      }
+    }
+
+    function startShimmer() {
+      shimmerTimer = setTimeout(() => {
+        if (spawnedItems.length > 0) {
+          const item = rng.choice(spawnedItems);
+          item.mainHex = hx(mix(item.color, [1.0, 0.82, 0.88], 0.55));
+          renderCanvas();
+
+          setTimeout(() => {
+            item.mainHex = item.settledHex;
+            renderCanvas();
+          }, 210);
+        }
+        startShimmer();
+      }, 145);
+    }
+
+    function step() {
+      if (spawning) {
+        acc += rate;
+        while (acc >= 1) {
+          acc -= 1;
+          if (orderIndex < ORDER.length) {
+            spawn(ORDER[orderIndex++]);
+          } else {
+            spawning = false;
+            break;
+          }
+        }
+      }
+
+      active = active.filter(p => animateItem(p));
+      renderCanvas();
+
+      if (!spawning && active.length === 0) {
+        startShimmer();
+        return;
+      }
+
+      stepTimer = setTimeout(step, TICK);
+    }
+
+    function startAnimation() {
+      if (stepTimer) clearTimeout(stepTimer);
+      if (shimmerTimer) clearTimeout(shimmerTimer);
+      spawnedItems = [];
+      active = [];
+      orderIndex = 0;
+      acc = 0.0;
+      spawning = true;
+      renderCanvas();
+      stepTimer = setTimeout(step, 200);
+    }
+
+    document.getElementById("replayBtn").addEventListener("click", startAnimation);
+    startAnimation();
+  </script>
+</body>
+</html>
